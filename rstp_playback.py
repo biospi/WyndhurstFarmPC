@@ -2,22 +2,13 @@ import json
 
 import requests
 import xmltodict
-import time
 from requests.auth import HTTPDigestAuth
-from datetime import datetime
+from datetime import datetime, timedelta
+import subprocess
+from pathlib import Path
 
-# Camera details
-CAMERA_IP = "10.70.66.16"
-USERNAME = "admin"  # Change if needed
-PASSWORD = "Ocs881212"  # Change if needed
-
-# ONVIF URLs
-SEARCH_SERVICE_URL = f"http://{CAMERA_IP}/onvif/search_service"
-RECORDING_SERVICE_URL = f"http://{CAMERA_IP}/onvif/recording_service"
-EXPORT_SERVICE_URL = f"http://{CAMERA_IP}/onvif/recording_service"
-REPLAY_SERVICE_URL = f"http://{CAMERA_IP}/onvif/replay_service"
-EVENT_SERVICE_URL = f'http://{CAMERA_IP}/onvif/event_service'
-
+USERNAME = "admin"
+PASSWORD = "Ocs881212"
 
 # ONVIF Headers
 HEADERS = {"Content-Type": "text/xml; charset=utf-8"}
@@ -29,9 +20,7 @@ def send_soap_request(url, body):
     response = requests.post(url, data=body, headers=HEADERS, auth=AUTH)
     return xmltodict.parse(response.text)
 
-
-def find_recordings():
-    """ Step 1: Start a search for recordings. """
+def find_recordings(ip):
     body = f"""<?xml version="1.0" encoding="utf-8"?>
     <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
         <s:Body>
@@ -43,9 +32,13 @@ def find_recordings():
             </FindRecordings>
         </s:Body>
     </s:Envelope>"""
-
+    print("***************************REQUEST*********************************")
+    SEARCH_SERVICE_URL = f"http://{ip}/onvif/search_service"
+    print(SEARCH_SERVICE_URL)
+    print(body)
+    print("***************************RESPONSE*********************************")
     response = send_soap_request(SEARCH_SERVICE_URL, body)
-    print(json.dumps(response, indent=4))
+    print(json.dumps(response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"], indent=4))
     if response:
         try:
             search_token = response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"]["tse:FindRecordingsResponse"]["tse:SearchToken"]
@@ -56,32 +49,8 @@ def find_recordings():
     return None
 
 
-def find_recordings():
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-        <s:Body>
-            <FindRecordings xmlns="http://www.onvif.org/ver10/search/wsdl">
-                <Scope>
-                    <RecordingInformationFilter xmlns="http://www.onvif.org/ver10/schema">boolean(//Track[TrackType = "Video"])</RecordingInformationFilter>
-                </Scope>
-                <KeepAliveTime>PT10S</KeepAliveTime>
-            </FindRecordings>
-        </s:Body>
-    </s:Envelope>"""
-
-    response = send_soap_request(SEARCH_SERVICE_URL, body)
-    print(json.dumps(response, indent=4))
-    if response:
-        try:
-            search_token = response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"]["tse:FindRecordingsResponse"]["tse:SearchToken"]
-            print(f"Search Token: {search_token}")
-            return search_token
-        except KeyError:
-            print("Failed to retrieve SearchToken.")
-    return None
-
-def get_recording_results(search_token):
-    time.sleep(3)  # Wait to ensure search is complete
+def get_recording_results(ip, search_token):
+    #time.sleep(3)
     body = f"""<?xml version="1.0" encoding="utf-8"?>
     <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
         <s:Body>
@@ -91,271 +60,140 @@ def get_recording_results(search_token):
             </GetRecordingSearchResults>
         </s:Body>
     </s:Envelope>"""
-
+    print("***********************REQUEST*************************************")
+    SEARCH_SERVICE_URL = f"http://{ip}/onvif/search_service"
+    print(body)
+    print("***********************RESPONSE*************************************")
     response = send_soap_request(SEARCH_SERVICE_URL, body)
     if response:
-        print(json.dumps(response, indent=4))
+        print(json.dumps(response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"], indent=4))
         try:
             recording_info = response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"]["tse:GetRecordingSearchResultsResponse"]["tse:ResultList"]["tt:RecordingInformation"]
-            recording_token = recording_info["tt:RecordingToken"]
-            print(f"Recording Found: {recording_token}")
-            return recording_token
+            earliest_recording = format_datetime(recording_info["tt:EarliestRecording"])
+            latest_recording = format_datetime(recording_info["tt:LatestRecording"])
+            print(f"earliest_recording: {earliest_recording} latest_recording: {latest_recording}")
+            return earliest_recording, latest_recording
         except KeyError:
-            print("No recordings found.")
-    return None
+            return None, None
+    return None, None
 
-def get_recording_by_token(recording_token):
-    # Request to retrieve actual recording details using the recording token
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-        <s:Body>
-            <GetRecordings xmlns="http://www.onvif.org/ver10/recording/wsdl">
-                <RecordingToken>{recording_token}</RecordingToken>
-            </GetRecordings>
-        </s:Body>
-    </s:Envelope>"""
-    print(body)
-    response = send_soap_request(RECORDING_SERVICE_URL, body)
-    if response:
-        print(json.dumps(response, indent=4))
-        try:
-            # Extract actual recording data or URI from the response
-            recordings = response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"]["trt:GetRecordingsResponse"]["trt:Recording"]
-            for recording in recordings:
-                print(f"Recording URI: {recording['trt:URI']}")
-            return recordings
-        except KeyError:
-            print("No recordings found.")
-    return None
+def format_datetime(old_datetime: str):
+    """Convert datetime string from 'YYYY-MM-DDTHH:MM:SSZ' to 'YYYYMMDDHHMMSS'."""
+    dt = datetime.strptime(old_datetime, "%Y-%m-%dT%H:%M:%SZ")
+    return dt.strftime("%Y%m%d%H%M%S")
 
 
-def export_recorded_data(recording_token, track_token, time_from, time_to):
-    time.sleep(3)  # Wait to ensure export request is processed
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-        <s:Body>
-            <ExportRecordedData xmlns="http://www.onvif.org/ver10/search/wsdl">
-                <RecordingToken>{recording_token}</RecordingToken>
-                <TrackToken>{track_token}</TrackToken>
-                <TimeFrom>{time_from}</TimeFrom>
-                <TimeTo>{time_to}</TimeTo>
-            </ExportRecordedData>
-        </s:Body>
-    </s:Envelope>"""
+def generate_perfect_5min_ranges(start: str, end: str) -> list:
+    """Generate 5-minute aligned recording ranges from start to end timestamps."""
 
-    response = send_soap_request(EXPORT_SERVICE_URL, body)
-    if response:
-        print(json.dumps(response, indent=4))
-        try:
-            return response["SOAP-ENV:Body"]["ExportRecordedDataResponse"]["Uri"]
-        except KeyError:
-            print("Error: Export URI not found in response.")
-            return None
-    else:
-        print("Error: No response from the camera.")
-        return None
+    # Convert input strings to datetime objects
+    start_dt = datetime.strptime(start, "%Y%m%d%H%M%S")
+    end_dt = datetime.strptime(end, "%Y%m%d%H%M%S")
 
+    # Align start time to the nearest 5-minute mark
+    aligned_start_dt = start_dt.replace(second=0, microsecond=0)
+    if aligned_start_dt.minute % 5 != 0:
+        aligned_start_dt += timedelta(minutes=(5 - aligned_start_dt.minute % 5))  # Move up to next 5-minute mark
 
-def get_recording_by_token(recording_token):
-    # Construct the SOAP body for the GetRecordings request with possible other prefixes
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:tt="http://www.onvif.org/ver10/recording/wsdl">
-        <s:Body>
-            <tt:GetRecordings>
-                <tt:RecordingToken>{recording_token}</tt:RecordingToken>
-            </tt:GetRecordings>
-        </s:Body>
-    </s:Envelope>"""
+    step = timedelta(minutes=5)
+    ranges = []
+    current_dt = aligned_start_dt
 
-    # Send the SOAP request to the recording service
-    response = send_soap_request(RECORDING_SERVICE_URL, body)
-    if response:
-        print(json.dumps(response, indent=4))
-        try:
-            # Parse and process the response
-            recordings = response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"]["tt:GetRecordingsResponse"]["tt:Recording"]
-            for recording in recordings:
-                print(f"Recording URI: {recording['tt:URI']}")
-            return recordings
-        except KeyError:
-            print("No recordings found.")
-    return None
+    while current_dt < end_dt:
+        next_dt = current_dt + step
+        if next_dt > end_dt:
+            break  # Stop if the next step exceeds the end time
+        ranges.append([current_dt.strftime('%Y%m%d%H%M%S'), next_dt.strftime('%Y%m%d%H%M%S')])
+        current_dt = next_dt  # Move to the next 5-minute interval
 
+    return ranges
 
-def find_events_by_time_range(search_token, start_time, end_time):
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-        <s:Body xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-            <FindEvents xmlns="http://www.onvif.org/ver10/search/wsdl">
-                <StartPoint>{start_time}</StartPoint>
-                <EndPoint>{end_time}</EndPoint>
-                <Scope>
-                    <IncludedRecordings xmlns="http://www.onvif.org/ver10/schema">{search_token}</IncludedRecordings>
-                </Scope>
-                <SearchFilter>
-                    <wsnt:TopicExpression Dialect="http://www.onvif.org/ver10/tev/topicExpression/ConcreteSet"
-                        xmlns:wsnt="http://docs.oasis-open.org/wsn/b-2"
-                        xmlns:tns1="http://www.onvif.org/ver10/topics">
-                        tns1:RecordingHistory/Track/State
-                    </wsnt:TopicExpression>
-                </SearchFilter>
-                <IncludeStartState>true</IncludeStartState>
-                <KeepAliveTime>PT60S</KeepAliveTime>
-            </FindEvents>
-        </s:Body>
-    </s:Envelope>"""
+def generate_recording_ranges(start: str, end: str) -> list:
+    """Generate 20-minute recording ranges between start and end timestamps."""
+    start_dt = datetime.strptime(start, "%Y%m%d%H%M%S")
+    end_dt = datetime.strptime(end, "%Y%m%d%H%M%S")
+    step = timedelta(minutes=10)
 
-    print(body)
-    try:
-        response = send_soap_request(EVENT_SERVICE_URL, body)
-        print(json.dumps(response, indent=4))
-    except requests.exceptions.RequestException as e:
-        print(f"Error during SOAP request: {e}")
+    ranges = []
+    current_dt = start_dt
 
-    return None
+    while current_dt < end_dt:
+        next_dt = min(current_dt + step, end_dt)
+        ranges.append([current_dt.strftime('%Y%m%d%H%M%S'), next_dt.strftime('%Y%m%d%H%M%S')])
+        current_dt = next_dt
+
+    return ranges
+
+def create_output_directory(output_file: str, ip_tag: str):
+    """
+    Creates an output directory based on the first timestamp of the output file.
+
+    :param output_file: The path to the output file.
+    :return: The path to the created directory.
+    """
+    timestamp_str = output_file.split('_')[0]
+    timestamp = datetime.strptime(timestamp_str, '%Y%m%d%H%M%S')
+    date_subfolder = timestamp.strftime('%Y%b%d')
+    output_dir = Path(f'/media/fo18103/Storage/CCTV/hanwha/media/66{ip_tag[-3:]}/{date_subfolder}/videos/')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(output_dir)
+    return output_dir
 
 
-def get_replay_uri(recording_token):
-    """Sends a SOAP request to retrieve the replay URI for a given recording token."""
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-        <s:Body>
-            <trp:GetReplayUri xmlns:trp="http://www.onvif.org/ver10/replay/wsdl">
-                <trp:StreamSetup>
-                    <tt:Stream xmlns:tt="http://www.onvif.org/ver10/schema">RTP-Unicast</tt:Stream>
-                    <tt:Transport xmlns:tt="http://www.onvif.org/ver10/schema">
-                        <tt:Protocol>RTSP</tt:Protocol>
-                    </tt:Transport>
-                </trp:StreamSetup>
-                <trp:RecordingToken>{recording_token}</trp:RecordingToken>
-            </trp:GetReplayUri>
-        </s:Body>
-    </s:Envelope>"""
-    response = send_soap_request(REPLAY_SERVICE_URL, body)
-    print(json.dumps(response, indent=4))
+def find_all_mp4_files(root_directory= "/media/fo18103/Storage/CCTV/hanwha/media/"):
+    """
+    Finds all .mp4 files in the given root directory and its subdirectories.
 
+    :param root_directory: The root directory to start searching in.
+    :return: A list of Path objects pointing to each .mp4 file found.
+    """
+    root_path = Path(root_directory)
+    mp4_files = list(root_path.rglob("*.mp4"))
+    return mp4_files
 
-# def get_replay_uri(recording_token, start_time, end_time):
-#     """Sends a SOAP request to retrieve the replay URI for a given recording token."""
-#
-#     # Ensure the times are in the correct format with "Z" indicating UTC
-#     start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')  # Use 'Z' for UTC
-#     end_time_str = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')  # Use 'Z' for UTC
-#
-#     # Build the SOAP body for GetReplayUri with the necessary parameters
-#     body = f"""<?xml version="1.0" encoding="utf-8"?>
-#     <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
-#                        xmlns:trp="http://www.onvif.org/ver10/replay/wsdl"
-#                        xmlns:tt="http://www.onvif.org/ver10/schema">
-#         <SOAP-ENV:Body>
-#             <trp:GetReplayUri>
-#                 <trp:StreamSetup>
-#                     <tt:Stream>RTP-Unicast</tt:Stream>
-#                     <tt:Transport>
-#                         <tt:Protocol>RTSP</tt:Protocol>
-#                     </tt:Transport>
-#                 </trp:StreamSetup>
-#                 <trp:RecordingToken>{recording_token}</trp:RecordingToken>
-#             </trp:GetReplayUri>
-#         </SOAP-ENV:Body>
-#     </SOAP-ENV:Envelope>"""
-#
-#     # Send the request and get the response
-#     try:
-#         response = send_soap_request(REPLAY_SERVICE_URL, body)
-#         print(json.dumps(response, indent=4))
-#         return response
-#     except requests.exceptions.RequestException as e:
-#         print(f"Error during SOAP request: {e}")
-#         return None
-
-
-def download_file(uri, filename="recording.mp4"):
-    """ Step 4: Download the file from the given URI. """
-    print(f"Downloading {filename} from {uri}...")
-    response = requests.get(uri, stream=True, auth=(USERNAME, PASSWORD))
-    if response.status_code == 200:
-        with open(filename, "wb") as f:
-            for chunk in response.iter_content(chunk_size=1024):
-                f.write(chunk)
-        print("Download complete.")
-    else:
-        print(f"Failed to download: {response.status_code}")
-
-
-def get_track_details(track_token):
-    # Construct the SOAP body for the GetTrack request using the TrackToken
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">
-        <s:Body>
-            <GetTrack xmlns="http://www.onvif.org/ver10/recording/wsdl">
-                <TrackToken>{track_token}</TrackToken>
-            </GetTrack>
-        </s:Body>
-    </s:Envelope>"""
-
-    # Send the SOAP request to get track details
-    response = send_soap_request(RECORDING_SERVICE_URL, body)
-    if response:
-        print(json.dumps(response, indent=4))
-        try:
-            track_info = response["SOAP-ENV:Envelope"]["SOAP-ENV:Body"]["trt:GetTrackResponse"]["trt:Track"]
-            print(f"Track Info: {track_info}")
-            return track_info
-        except KeyError:
-            print("No track found.")
-    return None
-
-
-def search_recordings(recording_token, start_time, end_time):
-    """Searches for recordings within a specified time range."""
-
-    # Ensure the times are in the correct format with "Z" indicating UTC
-    start_time_str = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')  # Use 'Z' for UTC
-    end_time_str = end_time.strftime('%Y-%m-%dT%H:%M:%SZ')  # Use 'Z' for UTC
-
-    # Build the SOAP body for searching recordings
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope"
-                       xmlns:trp="http://www.onvif.org/ver10/recording/wsdl"
-                       xmlns:tt="http://www.onvif.org/ver10/schema">
-        <SOAP-ENV:Body>
-            <trp:GetRecordings>
-            </trp:GetRecordings>
-        </SOAP-ENV:Body>
-    </SOAP-ENV:Envelope>"""
-
-    # Send the request and get the response
-    try:
-        response = send_soap_request(REPLAY_SERVICE_URL, body)
-        print(json.dumps(response, indent=4))
-        return response
-    except requests.exceptions.RequestException as e:
-        print(f"Error during SOAP request: {e}")
-        return None
 
 if __name__ == "__main__":
-    search_token = find_recordings()
-    if search_token:
-        recording_token = get_recording_results(search_token)
-    else:
-        print("Failed to start recording search.")
+    cctvs = [line.strip() for line in open("hanwha_tpen.txt").readlines()]
+    for ip in cctvs:
+        search_token = find_recordings(ip)
+        earliest_recording, latest_recording = get_recording_results(ip, search_token)
+        clips = generate_perfect_5min_ranges(earliest_recording, latest_recording)[400:]
+        print(f"Found {len(clips)} recordings. First clip: [{clips[0]}] Last clip: [{clips[-1]}]")
+
+        for i in range(len(clips)):
+            videos = find_all_mp4_files(f"/media/fo18103/Storage/CCTV/hanwha/media/66.{ip[-2:]}")
+            range = f"{clips[i][0]}-{clips[i][1]}"
+            rtsp_url = f"rtsp://{USERNAME}:{PASSWORD}@10.70.66.16/recording/{range}/OverlappedID=0/backup.smp"
+            print(rtsp_url)
+
+            filename = f"{range}.mp4".replace("-", '_')
+            out_dir = create_output_directory(filename, ip)
+            output_file = out_dir / filename
+            print(f"Output file: {output_file}")
+
+            if output_file.exists():
+                print(f"File {output_file} already exists. Skipping download.")
+                continue  # Skip the download if the file already exists
+
+            output_file.unlink(missing_ok=True)
+
+            ffmpeg_command = [
+                "ffmpeg",
+                "-rtsp_transport", "tcp",
+                "-rtbufsize", "100M",
+                "-i", rtsp_url,
+                "-an",
+                "-c:v", "libx264",
+                "-crf", "28",
+                "-preset", "veryslow",
+                "-f", "mp4",
+                output_file.as_posix()
+            ]
+            print(ffmpeg_command)
+            try:
+                subprocess.run(ffmpeg_command, check=True)
+                print("Download complete. Saved as:", output_file)
+            except subprocess.CalledProcessError as e:
+                print("Error:", e)
 
 
-    #get_recording_by_token(recording_token)
-    # recording_token = "Recording-1"
-    # track_token = "VIDEO002"
-    time_from = "2025-02-28T16:05:44Z"
-    time_to = "2025-02-28T17:58:00Z"
-    #
-    # download_link = export_recorded_data(recording_token, track_token, time_from, time_to)
-    # if download_link:
-    #     print(f"Download video from: {download_link}")
-
-    #
-    # replay_response = get_replay_uri(recording_token, start_time, end_time)
-
-    # search_recordings(recording_token, start_time, end_time)
-
-    #get_replay_uri(recording_token)
-    find_events_by_time_range(recording_token, time_from, time_to)

@@ -50,13 +50,15 @@ def genmsg_SETUP(url,seq,userAgent,authSeq):
     return msgRet
 
 
-def genmsg_PLAY(url,seq,userAgent,sessionId,authSeq):
+def genmsg_PLAY(url,seq,userAgent,sessionId,authSeq,clock):
     msgRet = "PLAY " + url + " RTSP/1.0\r\n"
     msgRet += "CSeq: " + str(seq) + "\r\n"
     msgRet += "Authorization: " + authSeq + "\r\n"
     msgRet += "User-Agent: " + userAgent + "\r\n"
     msgRet += "Session: " + sessionId + "\r\n"
-    msgRet += "Range: clock=20250123T140000Z-20250123T140500Z\r\n"
+    msgRet += "Require: " + "onvif-replay" + "\r\n"
+    msgRet += "Range: clock="+clock+"\r\n"
+    msgRet += "Rate-Control: no\r\n"
     msgRet += "\r\n"
     return msgRet
 
@@ -97,17 +99,21 @@ def generateAuthString(username,password,realm,method,uri,nonce):
     return mapRetInf
 
 
-def download_video(trackid, control, output_file, duration="00:05:00"):
-    rtsp_url = f"rtsp://admin:{m_Vars['defaultPassword']}@{ip}/recording/play.smp/trackID={trackid}?clock=20250123T140000Z"
+def download_video(trackid, control, output_file, clock, duration="00:05:00"):
+    rtsp_url = f"rtsp://admin:{m_Vars['defaultPassword']}@{ip}/recording/play.smp/trackID={trackid}?clock={clock}"
+    rtsp_url = "rtsp://admin:OcS881212@10.70.66.16/recording/play.smp?Range=clock=20250302T224900Z-20250302T225000Z"
+    rtsp_url = "rtsp://admin:OcS881212@10.70.66.16/recording/20250303000000-20250303000500/OverlappedID=0/backup.smp"
     command = [
-        "ffmpeg",
+        "ffplay ",
+        # "loglevel", "debug",
         "-rtsp_transport", "tcp",  # Use TCP for RTSP transport
         "-i", rtsp_url,           # RTSP URL with track ID
-        "-c", "copy",             # Copy codec to avoid re-encoding
+        # "-c", "copy",             # Copy codec to avoid re-encoding
         "-y",                     # Overwrite output file if it exists
-        "-t", duration,           # Duration of the video
-        output_file               # Output file path
+        # "-t", duration,           # Duration of the video
+        #output_file               # Output file path
     ]
+    print(command)
 
     try:
         subprocess.run(command, check=True)
@@ -116,9 +122,20 @@ def download_video(trackid, control, output_file, duration="00:05:00"):
         print(f"Error during video download: {e}")
 
 
+def bprint(byte_string):
+    # Decode the byte string to a regular string
+    decoded_string = byte_string.decode('utf-8')
+
+    # Split by newlines to get each header and its value
+    lines = decoded_string.split('\r\n')
+
+    # Print each line
+    print("**************")
+    for line in lines:
+        print(line)
 
 if __name__ == "__main__":
-    ip="10.70.66.27"
+    ip="10.70.66.16"
     # start = "20250123000000"
     # end = "20250123000500"
     # out = "test.mp4"
@@ -136,13 +153,15 @@ if __name__ == "__main__":
     authSeq = base64.b64encode(("admin" + ":" + "Ocs881212").encode("ascii"))
     authSeq = "Basic " + authSeq.decode("utf-8")
 
-    url = "rtsp://10.70.66.27/recording/play.smp"
+    url = "rtsp://10.70.66.16/recording/play.smp"
+    #url = "rtsp://10.70.66.16/ProfileG/Recording-1/recording/play.smp"
+    url = "rtsp://10.70.66.16/recording/20250303000000-20250303000500/OverlappedID=0/backup.smp"
     msg_describe = genmsg_DESCRIBE(url, seq, m_Vars["defaultUserAgent"], authSeq)
-    print(msg_describe)
     msg_describe = msg_describe.encode("ascii")
+    bprint(msg_describe)
     s.send(msg_describe)
     out_describe = s.recv(4096)
-    print(out_describe)
+    bprint(out_describe)
     print("***********************************")
     seq = seq + 1
     out_describe = out_describe.decode("utf-8")
@@ -164,7 +183,7 @@ if __name__ == "__main__":
                                      m_Vars["defaultTestUri"], nonce)
 
         msg_describe = genmsg_DESCRIBE(url, seq, m_Vars["defaultUserAgent"], authSeq).encode("ascii")
-        print(msg_describe)
+        bprint(msg_describe)
         s.send(msg_describe)
         out_describe = s.recv(m_Vars["bufLen"]).decode("utf-8")
         print(out_describe)
@@ -181,10 +200,10 @@ if __name__ == "__main__":
     sessionId = msg_setup.split("response=")[1].split('\r')[0].replace('\"', '')
     print(f"sessionId={sessionId}")
     msg_setup = msg_setup.encode("ascii")
-    print(msg_setup)
+    bprint(msg_setup)
     s.send(msg_setup)
     out_setup = s.recv(m_Vars["bufLen"])
-    print(out_setup)
+    bprint(out_setup)
     print("***********************************")
     seq = seq + 1
     #sessionId = decodeSession(msg1.decode("utf-8"))
@@ -198,17 +217,18 @@ if __name__ == "__main__":
     # print(msg1)
     # seq = seq + 1
 
-    msg_play = genmsg_PLAY(control + "/", seq, m_Vars["defaultUserAgent"], sessionId, authSeq)
+    range = "20250302T225000.440Z-20250302T224900Z"
+    msg_play = genmsg_PLAY(control + "/", seq, m_Vars["defaultUserAgent"], sessionId, authSeq, range)
     msg_play = msg_play.encode("ascii")
-    print(msg_play)
+    bprint(msg_play)
     s.send(msg_play)
     out_play = s.recv(m_Vars["bufLen"])
-    print(out_play)
+    bprint(out_play)
     seq = seq + 1
 
     print("**************************************************")
 
-    download_video("aac-16", control, "video.mp4", "00:05:00")
+    download_video("G726-16", control, "video.mp4", range,"00:05:00")
     #TODO video download to video.mp4
 
     ''' 
