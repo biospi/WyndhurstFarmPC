@@ -1,4 +1,5 @@
 import json
+import sys
 
 import requests
 import xmltodict
@@ -6,6 +7,8 @@ from requests.auth import HTTPDigestAuth
 from datetime import datetime, timedelta
 import subprocess
 from pathlib import Path
+
+from utils import run_cmd
 
 USERNAME = "admin"
 PASSWORD = "Ocs881212"
@@ -152,48 +155,55 @@ def find_all_mp4_files(root_directory= "/media/fo18103/Storage/CCTV/hanwha/media
     return mp4_files
 
 
+def main(ip):
+    search_token = find_recordings(ip)
+    earliest_recording, latest_recording = get_recording_results(ip, search_token)
+    clips = generate_perfect_5min_ranges(earliest_recording, latest_recording)[400:]
+    print(f"Found {len(clips)} recordings. First clip: [{clips[0]}] Last clip: [{clips[-1]}]")
+
+    for i in range(len(clips)):
+        videos = find_all_mp4_files(f"/media/fo18103/Storage/CCTV/hanwha/media/66.{ip[-2:]}")
+        clock = f"{clips[i][0]}-{clips[i][1]}"
+        rtsp_url = f"rtsp://{USERNAME}:{PASSWORD}@{ip}/recording/{clock}/OverlappedID=0/backup.smp"
+        print(rtsp_url)
+
+        filename = f"{clock}.mp4".replace("-", '_')
+        out_dir = create_output_directory(filename, ip)
+        output_file = out_dir / filename
+        print(f"Output file: {output_file}")
+
+        if output_file.exists():
+            print(f"File {output_file} already exists. Skipping download.")
+            continue  # Skip the download if the file already exists
+
+        output_file.unlink(missing_ok=True)
+
+        ffmpeg_command = [
+            "ffmpeg",
+            "-rtsp_transport", "tcp",
+            "-rtbufsize", "100M",
+            "-i", rtsp_url,
+            "-an",
+            "-c:v", "libx264",
+            "-crf", "28",
+            "-preset", "veryslow",
+            "-f", "mp4",
+            output_file.as_posix()
+        ]
+        ffmpeg_command = " ".join(ffmpeg_command).strip()
+        print(f"FFMPEG CMD:{ffmpeg_command}")
+        p_status = run_cmd(ffmpeg_command, verbose=True)
+        print(f"p_status={p_status}")
+
+
 if __name__ == "__main__":
-    cctvs = [line.strip() for line in open("hanwha_tpen.txt").readlines()]
-    for ip in cctvs:
-        search_token = find_recordings(ip)
-        earliest_recording, latest_recording = get_recording_results(ip, search_token)
-        clips = generate_perfect_5min_ranges(earliest_recording, latest_recording)[400:]
-        print(f"Found {len(clips)} recordings. First clip: [{clips[0]}] Last clip: [{clips[-1]}]")
-
-        for i in range(len(clips)):
-            videos = find_all_mp4_files(f"/media/fo18103/Storage/CCTV/hanwha/media/66.{ip[-2:]}")
-            range = f"{clips[i][0]}-{clips[i][1]}"
-            rtsp_url = f"rtsp://{USERNAME}:{PASSWORD}@10.70.66.16/recording/{range}/OverlappedID=0/backup.smp"
-            print(rtsp_url)
-
-            filename = f"{range}.mp4".replace("-", '_')
-            out_dir = create_output_directory(filename, ip)
-            output_file = out_dir / filename
-            print(f"Output file: {output_file}")
-
-            if output_file.exists():
-                print(f"File {output_file} already exists. Skipping download.")
-                continue  # Skip the download if the file already exists
-
-            output_file.unlink(missing_ok=True)
-
-            ffmpeg_command = [
-                "ffmpeg",
-                "-rtsp_transport", "tcp",
-                "-rtbufsize", "100M",
-                "-i", rtsp_url,
-                "-an",
-                "-c:v", "libx264",
-                "-crf", "28",
-                "-preset", "veryslow",
-                "-f", "mp4",
-                output_file.as_posix()
-            ]
-            print(ffmpeg_command)
-            try:
-                subprocess.run(ffmpeg_command, check=True)
-                print("Download complete. Saved as:", output_file)
-            except subprocess.CalledProcessError as e:
-                print("Error:", e)
+    # cctvs = [line.strip() for line in open("hanwha_tpen.txt").readlines()]
+    # for ip in cctvs:
+    if len(sys.argv) > 1:
+        ip = sys.argv[1]
+        print("argument:", ip)
+        main(ip)
+    else:
+        print("No argument provided")
 
 
