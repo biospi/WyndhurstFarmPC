@@ -2,6 +2,9 @@ import base64
 import hashlib
 import subprocess
 import socket
+import configparser
+config = configparser.ConfigParser()
+config.read("config.cfg")
 
 m_Vars = {
     "bufLen" : 1024,
@@ -9,7 +12,7 @@ m_Vars = {
     "defaultUserAgent" : "RTSP Client",
     "defaultTestUri" : "/recording/play.smp",
     "defaultUsername" : "admin",
-    "defaultPassword" : "Ocs881212"
+    "defaultPassword" : config['AUTH']['password_hanwha']
 }
 
 def genmsg_OPTIONS(url,seq,userAgent,sessionId,authSeq):
@@ -64,7 +67,7 @@ def genmsg_PLAY(url,seq,userAgent,sessionId,authSeq,clock):
 
 
 def download_video(ip, start, end, out):
-    rtsp_url = f"rtsp://admin:Ocs881212@{ip}:554/recording/{start}-{end}/play.smp"
+    rtsp_url = f"rtsp://admin:{config['AUTH']['password_hanwha']}@{ip}:554/recording/{start}-{end}/play.smp"
     command = ["ffmpeg", "-i", rtsp_url, "-c", "copy", "-f", "mp4", out]
 
     try:
@@ -101,8 +104,8 @@ def generateAuthString(username,password,realm,method,uri,nonce):
 
 def download_video(trackid, control, output_file, clock, duration="00:05:00"):
     rtsp_url = f"rtsp://admin:{m_Vars['defaultPassword']}@{ip}/recording/play.smp/trackID={trackid}?clock={clock}"
-    rtsp_url = "rtsp://admin:OcS881212@10.70.66.16/recording/play.smp?Range=clock=20250302T224900Z-20250302T225000Z"
-    rtsp_url = "rtsp://admin:OcS881212@10.70.66.16/recording/20250303000000-20250303000500/OverlappedID=0/backup.smp"
+    rtsp_url = f"rtsp://admin:{config['AUTH']['password_hanwha']}@10.70.66.16/recording/play.smp?Range=clock=20250302T224900Z-20250302T225000Z"
+    rtsp_url = f"rtsp://admin:{config['AUTH']['password_hanwha']}@10.70.66.16/recording/20250303000000-20250303000500/OverlappedID=0/backup.smp"
     command = [
         "ffplay ",
         # "loglevel", "debug",
@@ -140,17 +143,11 @@ if __name__ == "__main__":
     # end = "20250123000500"
     # out = "test.mp4"
     # download_video(ip, start, end, out)
-    #dest = b"DESCRIBE rtsp://admin:Ocs881212@10.70.66.27/recording/play.smp RTSP/1.0\r\nCSeq: 0\r\n\r\n"
-
-
-
-    # dest = b"DESCRIBE rtsp://admin:Ocs881212@10.70.66.27/recording/play.smp RTSP/1.0\r\nCSeq: 2\r\nUser-Agent: python\r\nAccept: application/sdp\r\n\r\n"
-
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((ip, 554))
     seq = 1
 
-    authSeq = base64.b64encode(("admin" + ":" + "Ocs881212").encode("ascii"))
+    authSeq = base64.b64encode(("admin" + ":" + config['AUTH']['password_hanwha']).encode("ascii"))
     authSeq = "Basic " + authSeq.decode("utf-8")
 
     url = "rtsp://10.70.66.16/recording/play.smp"
@@ -231,10 +228,3 @@ if __name__ == "__main__":
     download_video("G726-16", control, "video.mp4", range,"00:05:00")
     #TODO video download to video.mp4
 
-    ''' 
-    
-    curl -f -- anyauth --user admin: Ocs881212 -X GET -d '<downloadRequest><playbackURI>rtsp://10.70.66.1/Streaming/tracks/101/?starttime=20250123T103203Z&amp;endtime=20250123T103508Z&amp;name=ch01_00000000070000000&amp;size=38567936</playbackURI></downloadRequest>' 'http://10.70.66.1:80/ISAPI/ContentMgmt/download' --output out.mp4
-    
-    curl -f -- anyauth --user admin: Ocs881212 -X GET -d '<downloadRequest><playbackURI>rtsp://10.70.66.27/recording/play.smp/trackID=G726-16</playbackURI></downloadRequest>' 'http://10.70.66.2:80/ISAPI/ContentMgmt/download' --output out.mp4
-    
-    '''
