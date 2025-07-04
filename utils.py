@@ -198,9 +198,3 @@ def format_dst(folder, video, ip_address):
     return path
 
 
-#rstp://admin:Ocs881212@10.70.66.28/profile1/media.smp
-#rtsp://10.70.66.24:1024/multicast/profile1/media.smp
-#rtsp://239.1.1.1:1024/multicast/profile1/media.smp
-#rtsp://239.1.1.1:1024/1/multicast/profile1/media.smp
-#rtsp://10.70.66.24:554/profile1/media.smp
-#rtsp://admin:Ocs881212@10.70.66.24:554/profile2/media.smp
